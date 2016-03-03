@@ -9,7 +9,6 @@
 	var View = function () {
 		this.element = $('#gallery');
 		this.loadVisibleRows.loading = false;
-		this.breadcrumb = new Gallery.Breadcrumb();
 	};
 
 	View.prototype = {
@@ -44,8 +43,8 @@
 					Gallery.showEmptyFolder();
 					this.hideButtons();
 					Gallery.currentAlbum = albumPath;
-					var availableWidth = $(window).width() - Gallery.buttonsWidth;
-					this.breadcrumb.init(albumPath, availableWidth);
+					this.breadcrumb = new Gallery.Breadcrumb(albumPath);
+					this.breadcrumb.setMaxWidth($(window).width() - Gallery.buttonsWidth);
 					Gallery.config.albumDesign = null;
 				}
 			} else {
@@ -80,6 +79,7 @@
 			}
 
 			this.clear();
+			$('#loading-indicator').show();
 
 			if (albumPath !== Gallery.currentAlbum) {
 				this.loadVisibleRows.loading = false;
@@ -136,56 +136,82 @@
 			 * At this stage, there is no loading taking place (loading = false|null), so we can
 			 * look for new rows
 			 */
-
 			var scroll = $('#content-wrapper').scrollTop() + $(window).scrollTop();
 			// 2 windows worth of rows is the limit from which we need to start loading new rows.
 			// As we scroll down, it grows
 			var targetHeight = ($(window).height() * 2) + scroll;
-			var showRows = _.throttle(function (album) {
+			var showRows = function (album) {
 
 				// If we've reached the end of the album, we kill the loader
 				if (!(album.viewedItems < album.subAlbums.length + album.images.length)) {
 					view.loadVisibleRows.loading = null;
+					$('#loading-indicator').hide();
 					return;
 				}
-
+/* feke */
+$(document).ready(function() {
+$('.album').click(function() { 
+sessionStorage.scrollCur = $('#content-wrapper').scrollTop();
+sessionStorage.M="0";
+});
+$(window).bind('mousewheel DOMMouseScroll', function(event){
+    if (event.originalEvent.wheelDelta > 0 || event.originalEvent.detail < 0) {
+        // scroll up
+sessionStorage.M="1";
+    }
+    else {
+sessionStorage.M="1";
+    }
+});
+if (sessionStorage.M == "0") {
+$('#content-wrapper').scrollTop(sessionStorage.scrollCur)
+};
+});
+/* feke */
 				// Everything is still in sync, since no deferred calls have been placed yet
 
-				var row = album.getRow($(window).width(), view.requestId);
-				var rowDom = row.getDom();
-				view.element.append(rowDom);
+				return album.getNextRow($(window).width()).then(function (row) {
 
-				return album.fillNextRow(row).then(function () {
 					/**
 					 * At this stage, the row has a width and contains references to images based
 					 * on
 					 * information available when making the request, but this information may have
 					 * changed while we were receiving thumbnails for the row
 					 */
+
 					if (view.requestId === row.requestId) {
-						if (Gallery.currentAlbum !== path) {
+						return row.getDom().then(function (dom) {
+
+							if (Gallery.currentAlbum !== path) {
+								view.loadVisibleRows.loading = null;
+								return; //throw away the row if the user has navigated away in the
+										// meantime
+							}
+							if (view.element.length === 1) {
+								Gallery.showNormal();
+							}
+
+							view.element.append(dom);
+
+							if (album.viewedItems < album.subAlbums.length + album.images.length &&
+								view.element.height() < targetHeight) {
+								return showRows(album);
+							}
+
+							// No more rows to load at the moment
 							view.loadVisibleRows.loading = null;
-							return; //throw away the row if the user has navigated away in the
-									// meantime
-						}
-						if (view.element.length === 1) {
-							Gallery.showNormal();
-						}
-						if (album.viewedItems < album.subAlbums.length + album.images.length &&
-							view.element.height() < targetHeight) {
-							return showRows(album);
-						}
-						// No more rows to load at the moment
-						view.loadVisibleRows.loading = null;
-					} else {
-						// This is the safest way to do things
-						view.viewAlbum(Gallery.currentAlbum);
+							$('#loading-indicator').hide();
+						}, function () {
+							// Something went wrong, so kill the loader
+							view.loadVisibleRows.loading = null;
+							$('#loading-indicator').hide();
+						});
 					}
-				}, function () {
-					// Something went wrong, so kill the loader
-					view.loadVisibleRows.loading = null;
+					// This is the safest way to do things
+					view.viewAlbum(Gallery.currentAlbum);
+
 				});
-			}, 100);
+			};
 			if (this.element.height() < targetHeight) {
 				this.loadVisibleRows.loading = true;
 				this.loadVisibleRows.loading = showRows(album);
@@ -194,6 +220,7 @@
 		},
 
 		hideButtons: function () {
+			$('#loading-indicator').hide();
 			$('#album-info-button').hide();
 			$('#share-button').hide();
 			$('#sort-name-button').hide();
@@ -220,7 +247,7 @@
 		},
 
 		/**
-		 * Sets up all the buttons of the interface and the breadcrumbs
+		 * Sets up all the buttons of the interface
 		 *
 		 * @param {string} albumPath
 		 * @private
@@ -229,8 +256,8 @@
 			this._shareButtonSetup(albumPath);
 			this._infoButtonSetup();
 
-			var availableWidth = $(window).width() - Gallery.buttonsWidth;
-			this.breadcrumb.init(albumPath, availableWidth);
+			this.breadcrumb = new Gallery.Breadcrumb(albumPath);
+			this.breadcrumb.setMaxWidth($(window).width() - Gallery.buttonsWidth);
 
 			$('#sort-name-button').show();
 			$('#sort-date-button').show();
@@ -306,7 +333,7 @@
 		 *
 		 * @param {string} sortType name or date
 		 * @param {string} sortOrder asc or des
-		 * @param {boolean} active determines if we're setting up the active sort button
+		 * @param {bool} active determines if we're setting up the active sort button
 		 * @private
 		 */
 		_setSortButton: function (sortType, sortOrder, active) {
